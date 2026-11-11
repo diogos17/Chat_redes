@@ -5,7 +5,7 @@ import java.nio.channels.*;
 import java.nio.charset.*;
 import java.util.*;
 
-public class Server
+public class ChatServer
 {
   // A pre-allocated buffer for the received data
   static private final ByteBuffer buffer = ByteBuffer.allocate( 16384 );
@@ -38,7 +38,7 @@ public class Server
       // Register the ServerSocketChannel, so we can listen for incoming
       // connections
       ssc.register( selector, SelectionKey.OP_ACCEPT );
-      System.out.println( "Listening on port "+port );
+      System.out.println( "Listening on port " + port );
 
       while (true) {
         // See if we've had any activity -- either an incoming connection,
@@ -152,7 +152,7 @@ public class Server
             while(username.hasRemaining()) 
                 ch.write(username);
             username.rewind();
-
+            
             while(buffer.hasRemaining()) 
                 ch.write(buffer);
             buffer.rewind();
