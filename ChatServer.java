@@ -5,10 +5,34 @@ import java.nio.channels.*;
 import java.nio.charset.*;
 import java.util.*;
 
+class Attachment {
+  String name;
+  int state; // 0-init, 1-outside, 2-inside
+  String sala; // nome da sua sala
+
+  // attachment(String name) {
+  //   this.name = name;
+  //   this.state = 0;
+  // }
+  Attachment() {
+    state = 0;
+  }
+}
+
 public class ChatServer
 {
   // A pre-allocated buffer for the received data
   static private final ByteBuffer buffer = ByteBuffer.allocate( 16384 );
+
+  static private final int INIT=0, OUTSIDE=1, INSIDE=2;
+  static private final Map<String, Integer> COMMANDS = new TreeMap<>(Map.of(
+    "/nick",  1,
+    "/join",  1,
+    "/leave", 0,
+    "/bye",   0,
+    "/priv",  2
+  ));
+  static private Set<String> usernames = new TreeSet<>();
 
   // Decoder for incoming text -- assume UTF-8
   static private final Charset charset = Charset.forName("UTF8");
@@ -71,8 +95,12 @@ public class ChatServer
             SocketChannel sc = s.getChannel();
             sc.configureBlocking( false );
 
+            
             // Register it with the selector, for reading
             sc.register( selector, SelectionKey.OP_READ );
+
+            // classe onde fica o nome, estado e sala
+            sc.keyFor(selector).attach(new Attachment());
 
           } else if (key.isReadable()) {
 
@@ -82,30 +110,22 @@ public class ChatServer
 
               // It's incoming data on a connection -- process it
               sc = (SocketChannel)key.channel();
-              if (key.attachment() == null) {
-                ByteBuffer aux = ByteBuffer.allocate( 16384 );
-                sc.read(aux);
-                aux.flip();
-                key.attach(aux);
-              }
-              else {
-                  boolean ok = processInput( sc, selector );
-    
-                  // If the connection is dead, remove it from the selector
-                  // and close it
-                  if (!ok) {
-                    key.cancel();
-    
-                    Socket s = null;
-                    try {
-                      s = sc.socket();
-                      System.out.println( "Closing connection to "+s );
-                      s.close();
-                    } catch( IOException ie ) {
-                      System.err.println( "Error closing socket "+s+": "+ie );
-                    }
-                  }
-                
+              
+              boolean ok = processInput( sc, selector );
+
+              // If the connection is dead, remove it from the selector
+              // and close it
+              if (!ok) {
+                key.cancel();
+
+                Socket s = null;
+                try {
+                  s = sc.socket();
+                  System.out.println( "Closing connection to "+s );
+                  s.close();
+                } catch( IOException ie ) {
+                  System.err.println( "Error closing socket "+s+": "+ie );
+                }
               }
 
             } catch( IOException ie ) {
@@ -137,26 +157,34 @@ public class ChatServer
     buffer.clear();
     sc.read( buffer );
     buffer.flip();
-
+    
     // If no data, close the connection
     if (buffer.limit()==0) {
       return false;
     }
 
-    ByteBuffer username = (ByteBuffer) sc.keyFor(selector).attachment();
-    // username.flip();
 
-    for (var key : selector.keys()) {
-        if (key.isReadable()) {
-            SocketChannel ch = (SocketChannel)key.channel();
-            while(username.hasRemaining()) 
-                ch.write(username);
-            username.rewind();
-            
-            while(buffer.hasRemaining()) 
-                ch.write(buffer);
-            buffer.rewind();
-        }
+    String received = charset.decode(buffer).toString().trim();
+    Attachment userData = (Attachment) sc.keyFor(selector).attachment();
+    // System.out.print("teste: " +  received);
+    String command;
+    if (( command = getCommand(received)) == null) {
+      sendMessage(sc, selector, "ERROR\n", null, null);
+    }
+    else if (command == "message") {
+      if (userData.state != INSIDE)
+        sendMessage(sc, selector, "ERROR\n", null, null);
+      else 
+        sendMessage(sc, selector, "MESSAGE" + userData.name + received + "\n", null, userData.sala);
+    }
+    else { // todo: switch de comandos 
+      switch(command) {
+        case "/nick"  -> handleNick(sc, selector, received);
+        // case "/join"  -> handleJoin(sc, arg);
+        // case "/leave" -> handleLeave(sc);
+        // case "/bye"   -> { return false; }
+        // case "/priv"  -> handlePriv(sc, arg);
+      }
     }
     
     // Decode and print the message to stdout
@@ -164,5 +192,65 @@ public class ChatServer
     // System.out.print( message );
 
     return true;
+  }
+
+  // returns null if command is invalid, "message" if it is a normal message and a command if it is valid
+  static private String getCommand(String received) {
+    String[] words = received.split("\\s+", 2);
+    if (COMMANDS.get(words[0]) != null) {
+      int nrArgs = COMMANDS.get(words[0]);
+      if (words.length != nrArgs+1)
+        return null;
+      else 
+        return words[0];
+    }
+
+    return "message";
+  }
+
+  static private void handleNick(SocketChannel sc, Selector selector, String received) throws IOException{
+    String words[] = received.split(" ");
+    Attachment userData = (Attachment) sc.keyFor(selector).attachment();
+    String nname = words[1];
+
+    if (usernames.contains(nname))
+      sendMessage(sc, selector, "ERROR\n", null, null);
+    else {
+      if (userData.state == INSIDE) {
+        String tmp = userData.sala;
+        userData.sala = "";
+        sendMessage(sc, selector, "NEWNICK " + userData.name + " " + nname + "\n", null, tmp);
+        userData.sala = tmp;
+      }
+      if (userData.state != INIT) // apagar nome antigo do set
+        usernames.remove(userData.name);
+        
+      sendMessage(sc, selector, "OK\n", null, null);
+      userData.name = nname;
+      usernames.add(nname);
+    }
+  }
+
+  static private void sendMessage(SocketChannel sc, Selector selector, String message, String receiver, String room) throws IOException{
+    ByteBuffer out = ByteBuffer.wrap((message).getBytes(charset));
+    if (receiver!= null) {
+      // codigo para enviar uma mensagem privada ao receiver
+    }
+    else if (room != null){
+      // codigo para mandar mensagem para a sala
+      for (var key : selector.keys()) {
+        if (key.isReadable()) {
+            SocketChannel ch = (SocketChannel)key.channel();
+            
+            while(out.hasRemaining()) 
+                ch.write(out);
+            out.rewind();
+        }
+    }
+    }
+    else { // enviar para o sc
+      while (out.hasRemaining())
+        sc.write(out);
+    }
   }
 }
