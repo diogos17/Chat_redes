@@ -85,12 +85,18 @@ public class ChatClient {
         BufferedReader inFromServer =
          new BufferedReader(new
                InputStreamReader(clientSocket.getInputStream()));
-        String line;
-        while((line = inFromServer.readLine()) != null) {
-            this.printMessage(line);
+        try {
+            String line;
+            while ((line = inFromServer.readLine()) != null) {
+                this.printMessage(line);
+            }
+        } catch (IOException e) {
+            // ligação perdida de forma abrupta: tratamos como fim de ligação
+        } finally {
+            try { clientSocket.close(); } catch (IOException e) { }
+            frame.dispose();
+            System.exit(0);
         }
-
-
     }
     
 

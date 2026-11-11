@@ -32,6 +32,7 @@ public class ChatServer
     "/bye",   0,
     "/priv",  2
   ));
+  static private Map<String, Set<SelectionKey>> rooms = new TreeMap<>();
   static private Set<String> usernames = new TreeSet<>();
 
   // Decoder for incoming text -- assume UTF-8
@@ -163,94 +164,167 @@ public class ChatServer
       return false;
     }
 
-
-    String received = charset.decode(buffer).toString().trim();
-    Attachment userData = (Attachment) sc.keyFor(selector).attachment();
+    String received = decoder.decode(buffer).toString().trim();
+    SelectionKey key = sc.keyFor(selector);
+    Attachment userData = (Attachment) key.attachment();
     // System.out.print("teste: " +  received);
-    String command;
-    if (( command = getCommand(received)) == null) {
-      sendMessage(sc, selector, "ERROR\n", null, null);
+    ArrayList<String> args;
+    if (( args = getCommand(received)) == null) {
+      sendError(key);
     }
-    else if (command == "message") {
+    else if (args.getFirst() == "message") {
       if (userData.state != INSIDE)
-        sendMessage(sc, selector, "ERROR\n", null, null);
+        sendError(key);
       else 
-        sendMessage(sc, selector, "MESSAGE" + userData.name + received + "\n", null, userData.sala);
+        sendMessage("MESSAGE" + " " + userData.name + " " + received + "\n", getRoom(userData.sala));
     }
     else { // todo: switch de comandos 
-      switch(command) {
-        case "/nick"  -> handleNick(sc, selector, received);
-        // case "/join"  -> handleJoin(sc, arg);
-        // case "/leave" -> handleLeave(sc);
-        // case "/bye"   -> { return false; }
-        // case "/priv"  -> handlePriv(sc, arg);
+      switch(args.getFirst()) {
+        case "/nick"  -> handleNick(key, args);
+        case "/join"  -> handleJoin(key, args);
+        case "/leave" -> handleLeave(key);
+        case "/bye"   -> { leaveRoom(key); goodBye(key); return false; }
+        case "/priv"  -> handlePriv(key, selector, args);
       }
     }
     
-    // Decode and print the message to stdout
-    // String message = decoder.decode(buffer).toString();
-    // System.out.print( message );
 
     return true;
   }
 
   // returns null if command is invalid, "message" if it is a normal message and a command if it is valid
-  static private String getCommand(String received) {
-    String[] words = received.split("\\s+", 2);
-    if (COMMANDS.get(words[0]) != null) {
-      int nrArgs = COMMANDS.get(words[0]);
-      if (words.length != nrArgs+1)
-        return null;
-      else 
-        return words[0];
-    }
+  static private ArrayList<String> getCommand(String received) {
+    ArrayList<String> words = new ArrayList<>(Arrays.asList(received.split("\\s+", 3)));
 
-    return "message";
+    Integer nrArgs = COMMANDS.get(words.getFirst());
+    if (nrArgs != null) 
+      return words.size() == nrArgs + 1 ? words : null;
+    
+    words.addFirst("message");
+    return words;
   }
 
-  static private void handleNick(SocketChannel sc, Selector selector, String received) throws IOException{
-    String words[] = received.split(" ");
-    Attachment userData = (Attachment) sc.keyFor(selector).attachment();
-    String nname = words[1];
+  private static Set<SelectionKey> getRoom(String room) {
+    return rooms.get(room);
+  }
+
+  private static void sendError(SelectionKey key) throws IOException {
+    sendMessage("ERROR\n", Set.of(key));
+  }
+
+  private static void sendConfirmation(SelectionKey key) throws IOException {
+    sendMessage("OK\n", Set.of(key));
+  }
+
+
+  static private void handleNick(SelectionKey key, ArrayList<String> args) throws IOException{
+    Attachment userData = (Attachment) key.attachment();
+    String nname = args.get(1);
 
     if (usernames.contains(nname))
-      sendMessage(sc, selector, "ERROR\n", null, null);
+      sendError(key);
     else {
       if (userData.state == INSIDE) {
-        String tmp = userData.sala;
-        userData.sala = "";
-        sendMessage(sc, selector, "NEWNICK " + userData.name + " " + nname + "\n", null, tmp);
-        userData.sala = tmp;
+        Set<SelectionKey> room = new HashSet<>(getRoom(userData.sala));
+        room.remove(key);
+        sendMessage("NEWNICK " + userData.name + " " + nname + "\n", room);
       }
       if (userData.state != INIT) // apagar nome antigo do set
         usernames.remove(userData.name);
+      else 
+        userData.state = OUTSIDE;
         
-      sendMessage(sc, selector, "OK\n", null, null);
+      sendConfirmation(key);
       userData.name = nname;
       usernames.add(nname);
     }
   }
 
-  static private void sendMessage(SocketChannel sc, Selector selector, String message, String receiver, String room) throws IOException{
+  static private void handleJoin(SelectionKey key, ArrayList<String> args) throws IOException {
+    Attachment userData = (Attachment) key.attachment();
+    if (userData.state == INIT) {
+      sendError(key);
+      return ;
+    }
+    leaveRoom(key);
+    
+    String newRoom = args.get(1);
+    userData.state = INSIDE;
+    userData.sala = newRoom;
+    sendConfirmation(key);
+    if (getRoom(newRoom) == null) 
+      rooms.put(newRoom, Set.of(key));
+    else {
+      Set<SelectionKey> room = new HashSet<>(getRoom(newRoom));
+      sendMessage("JOINED " + userData.name + "\n", room);
+      rooms.put(newRoom, room); // atualiza o set da sala
+      room.add(key);
+    }
+
+  }
+
+  static private boolean leaveRoom(SelectionKey key) throws IOException { // retorna falso se o user nao estava INSIDE
+    Attachment userData = (Attachment) key.attachment();
+
+    if (userData.state != INSIDE) return false;
+
+    userData.state = OUTSIDE;
+    Set<SelectionKey> room = new HashSet<>(getRoom(userData.sala)); // é preciso usar new hashset para o set nao ser imutavel
+    room.remove(key);
+    if (room.size() > 0)
+      rooms.put(userData.sala, room); // atualiza o set da sala
+    else
+      rooms.remove(userData.sala);
+    sendMessage("LEFT " + userData.name + "\n", room);
+
+    return true;
+  }
+
+
+  static private void handleLeave(SelectionKey key) throws IOException {
+    if (leaveRoom(key))
+      sendConfirmation(key);
+    else
+      sendError(key); 
+  }
+  
+  private static void goodBye(SelectionKey key) throws IOException{
+    sendMessage("BYE\n", Set.of(key));
+  }
+
+  static private void handlePriv(SelectionKey key, Selector selector, ArrayList<String> args) throws IOException {
+    Attachment userData = (Attachment) key.attachment();
+    if (userData.name == null) {
+      sendError(key);
+      return ;
+    }
+
+    SelectionKey receiverKey = getKey(args.get(1), selector);
+    if (receiverKey == null) {
+      sendError(key);
+      return ;
+    }
+    
+    sendConfirmation(key);
+    sendMessage("PRIVATE " + userData.name + " " + args.get(2) + "\n", Set.of(receiverKey));
+  }
+
+  static private SelectionKey getKey(String name, Selector selector) {
+    for (var key : selector.keys()) {
+      if (key.attachment() instanceof Attachment a && name.equals(a.name))
+            return key;
+    }
+
+    return null;
+  }
+
+  static private void sendMessage(String message, Set<SelectionKey> receiversKeys) throws IOException{
     ByteBuffer out = ByteBuffer.wrap((message).getBytes(charset));
-    if (receiver!= null) {
-      // codigo para enviar uma mensagem privada ao receiver
-    }
-    else if (room != null){
-      // codigo para mandar mensagem para a sala
-      for (var key : selector.keys()) {
-        if (key.isReadable()) {
-            SocketChannel ch = (SocketChannel)key.channel();
-            
-            while(out.hasRemaining()) 
-                ch.write(out);
-            out.rewind();
-        }
-    }
-    }
-    else { // enviar para o sc
+    for (var key : receiversKeys) {
+      SocketChannel sc = (SocketChannel) key.channel();
       while (out.hasRemaining())
         sc.write(out);
+      out.rewind();
     }
   }
 }
