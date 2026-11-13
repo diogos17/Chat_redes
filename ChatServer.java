@@ -159,14 +159,20 @@ public class ChatServer
     sc.read( buffer );
     buffer.flip();
     
+    SelectionKey key = sc.keyFor(selector);
+    Attachment userData = (Attachment) key.attachment();
+
     // If no data, close the connection
     if (buffer.limit()==0) {
+      leaveRoom(key);
+      if (userData.state != INIT) 
+        usernames.remove(userData.name);
       return false;
     }
 
     String received = decoder.decode(buffer).toString().trim();
-    SelectionKey key = sc.keyFor(selector);
-    Attachment userData = (Attachment) key.attachment();
+    if (received.charAt(0) == '/' && received.charAt(1) == '/')
+      received = received.substring(1);
     // System.out.print("teste: " +  received);
     ArrayList<String> args;
     if (( args = getCommand(received)) == null) {
@@ -183,7 +189,10 @@ public class ChatServer
         case "/nick"  -> handleNick(key, args);
         case "/join"  -> handleJoin(key, args);
         case "/leave" -> handleLeave(key);
-        case "/bye"   -> { leaveRoom(key); goodBye(key); return false; }
+        case "/bye"   -> { leaveRoom(key); 
+                          if (userData.state != INIT) usernames.remove(userData.name);
+                          goodBye(key); 
+                          return false; }
         case "/priv"  -> handlePriv(key, selector, args);
       }
     }
@@ -328,3 +337,7 @@ public class ChatServer
     }
   }
 }
+
+
+// todo
+// mudar o input do servidor para so processar quando recebe \n

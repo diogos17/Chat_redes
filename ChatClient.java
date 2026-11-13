@@ -18,6 +18,13 @@ public class ChatClient {
     // ser colocadas aqui
     Socket clientSocket;
     DataOutputStream outToServer;
+    static private final Set<String> COMMANDS = new TreeSet<>(Set.of(
+        "/nick",
+        "/join",
+        "/leave",
+        "/bye",
+        "/priv"
+    ));
 
 
     
@@ -74,6 +81,11 @@ public class ChatClient {
     // na caixa de entrada
     public void newMessage(String message) throws IOException {
         // PREENCHER AQUI com código que envia a mensagem ao servidor
+        if (message.charAt(0) == '/') {
+            String command[] = message.split(" ", 1);
+            if (!COMMANDS.contains(command[0]))
+                message = '/' + message;
+        }
         outToServer.write((message + '\n').getBytes("UTF-8"));
         outToServer.flush();
     }
