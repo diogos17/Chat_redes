@@ -5,7 +5,6 @@ import java.awt.*;
 import java.awt.event.*;
 import javax.swing.*;
 
-
 public class ChatClient {
 
     // Variáveis relacionadas com a interface gráfica --- * NÃO MODIFICAR *
@@ -19,22 +18,47 @@ public class ChatClient {
     Socket clientSocket;
     DataOutputStream outToServer;
     static private final Set<String> COMMANDS = new TreeSet<>(Set.of(
-        "/nick",
-        "/join",
-        "/leave",
-        "/bye",
-        "/priv"
-    ));
+            "/nick",
+            "/join",
+            "/leave",
+            "/bye",
+            "/priv"));
 
-
-    
     // Método a usar para acrescentar uma string à caixa de texto
     // * NÃO MODIFICAR *
     public void printMessage(final String message) {
         chatArea.append(message + '\n');
     }
 
-    
+    private String formatar(String line) {
+        String[] p = line.split(" ", 3);
+        switch (p[0]) {
+            case "MESSAGE":
+                if (p.length == 3)
+                    return p[1] + ": " + p[2];
+                break;
+            case "PRIVATE":
+                if (p.length == 3)
+                    return "(privado) " + p[1] + ": " + p[2];
+                break;
+            case "NEWNICK":
+                if (p.length == 3)
+                    return p[1] + " mudou de nome para " + p[2];
+                break;
+            case "JOINED":
+                if (p.length >= 2)
+                    return p[1] + " entrou na sala";
+                break;
+            case "LEFT":
+                if (p.length >= 2)
+                    return p[1] + " saiu da sala";
+                break;
+            case "BYE":
+                return "Até logo!";
+        }
+        return line; 
+    }
+
     // Construtor
     public ChatClient(String server, int port) throws IOException {
 
@@ -73,44 +97,42 @@ public class ChatClient {
         clientSocket = new Socket(server, port);
         outToServer = new DataOutputStream(clientSocket.getOutputStream());
 
-
     }
-
 
     // Método invocado sempre que o utilizador insere uma mensagem
     // na caixa de entrada
     public void newMessage(String message) throws IOException {
         // PREENCHER AQUI com código que envia a mensagem ao servidor
-        if (message.charAt(0) == '/') {
-            String command[] = message.split(" ", 1);
-            if (!COMMANDS.contains(command[0]))
+        if (!message.isEmpty() && message.charAt(0) == '/') {
+            String command[] = message.split(" ", 2);
+            if (!COMMANDS.contains(command[0])) {
                 message = '/' + message;
+            }
         }
         outToServer.write((message + '\n').getBytes("UTF-8"));
         outToServer.flush();
     }
 
-    
     // Método principal do objecto
     public void run() throws IOException {
         // PREENCHER AQUI
-        BufferedReader inFromServer =
-         new BufferedReader(new
-               InputStreamReader(clientSocket.getInputStream()));
+        BufferedReader inFromServer = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
         try {
             String line;
             while ((line = inFromServer.readLine()) != null) {
-                this.printMessage(line);
+                this.printMessage(formatar(line));
             }
         } catch (IOException e) {
             // ligação perdida de forma abrupta: tratamos como fim de ligação
         } finally {
-            try { clientSocket.close(); } catch (IOException e) { }
+            try {
+                clientSocket.close();
+            } catch (IOException e) {
+            }
             frame.dispose();
             System.exit(0);
         }
     }
-    
 
     // Instancia o ChatClient e arranca-o invocando o seu método run()
     // * NÃO MODIFICAR *
