@@ -341,3 +341,4 @@ public class ChatServer
 
 // todo
 // mudar o input do servidor para so processar quando recebe \n
+//teste
